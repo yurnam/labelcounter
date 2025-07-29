@@ -1,0 +1,205 @@
+import socket
+import time
+import threading
+import requests
+import json
+import os
+import datetime
+
+import customtkinter as ctk
+
+PRINTER_IP = "10.10.10.221"
+PRINTER_PORT = 9100
+ZPL_FEED = "^XA^FO0,0^GB1,1,1^FS^XZ\n"
+STATUS_URL = f"http://{PRINTER_IP}/index.html"
+MEDIA_OUT_TEXT = "Fehler: KEIN PAPIER"
+HISTORY_FILE = "history.json"
+
+
+def is_media_out():
+    try:
+        response = requests.get(STATUS_URL, timeout=2)
+        if MEDIA_OUT_TEXT in response.text:
+            print("[!] Detected media out from web interface.")
+            return True
+        return False
+    except requests.RequestException as e:
+        print(f"[!] Error fetching status page: {e}")
+        return False
+
+
+class LabelCounterThread(threading.Thread):
+    def __init__(self, update_callback, stop_event, pause_event):
+        super().__init__(daemon=True)
+        self.update_callback = update_callback
+        self.stop_event = stop_event
+        self.pause_event = pause_event
+        self.count = 0
+
+    def run(self):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(5)
+                s.connect((PRINTER_IP, PRINTER_PORT))
+                print("[\u2713] Connected to printer.")
+                while not self.stop_event.is_set():
+                    if self.pause_event.is_set():
+                        time.sleep(0.1)
+                        continue
+                    if is_media_out():
+                        print("[!] Stopping: Media is already out.")
+                        break
+                    s.send(ZPL_FEED.encode("utf-8"))
+                    self.count += 1
+                    self.update_callback(self.count)
+                    time.sleep(0.5)
+        except Exception as e:
+            print(f"[!] Connection error: {e}")
+
+
+class LabelCounterApp(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+        self.title("Label Counter")
+        self.geometry("500x600")
+
+        ctk.set_appearance_mode("System")
+        ctk.set_default_color_theme("blue")
+
+        self.job_name_var = ctk.StringVar()
+        self.count_var = ctk.IntVar(value=0)
+        self.history = self.load_history()
+        self.current_job = None
+        self.worker = None
+        self.stop_event = threading.Event()
+        self.pause_event = threading.Event()
+
+        self.create_widgets()
+        self.update_history_display()
+
+    def create_widgets(self):
+        self.frame_current = ctk.CTkFrame(self)
+        self.frame_current.pack(padx=10, pady=10, fill="x")
+
+        self.entry_job = ctk.CTkEntry(self.frame_current, textvariable=self.job_name_var, placeholder_text="Job Name")
+        self.entry_job.pack(side="left", expand=True, fill="x", padx=(0, 10))
+        self.btn_start = ctk.CTkButton(self.frame_current, text="Start Job", command=self.start_job)
+        self.btn_start.pack(side="left")
+
+        self.frame_controls = ctk.CTkFrame(self)
+
+        self.frame_history = ctk.CTkFrame(self)
+        self.frame_history.pack(padx=10, pady=10, fill="both", expand=True)
+        self.text_history = ctk.CTkTextbox(self.frame_history, state="disabled")
+        self.text_history.pack(fill="both", expand=True)
+
+    def start_job(self):
+        name = self.job_name_var.get().strip()
+        if not name:
+            return
+        self.current_job = {
+            "name": name,
+            "start": datetime.datetime.now().isoformat(timespec="seconds"),
+            "count": 0,
+            "canceled": False,
+        }
+        self.count_var.set(0)
+        self.stop_event.clear()
+        self.pause_event.clear()
+        self.worker = LabelCounterThread(self.update_count_from_thread, self.stop_event, self.pause_event)
+        self.worker.start()
+        self.show_controls()
+
+    def show_controls(self):
+        for widget in self.frame_controls.winfo_children():
+            widget.destroy()
+        self.frame_controls.pack(padx=10, pady=10, fill="x")
+
+        ctk.CTkLabel(self.frame_controls, textvariable=self.count_var, width=80).pack(side="left", padx=5)
+        self.btn_plus = ctk.CTkButton(self.frame_controls, text="+1", width=50, command=self.increment_count)
+        self.btn_plus.pack(side="left")
+        self.btn_minus = ctk.CTkButton(self.frame_controls, text="-1", width=50, command=self.decrement_count)
+        self.btn_minus.pack(side="left")
+        self.btn_pause = ctk.CTkButton(self.frame_controls, text="Pause", width=80, command=self.toggle_pause)
+        self.btn_pause.pack(side="left", padx=5)
+        self.btn_end = ctk.CTkButton(self.frame_controls, text="End", width=80, command=self.end_job)
+        self.btn_end.pack(side="left")
+        self.btn_cancel = ctk.CTkButton(self.frame_controls, text="Cancel", width=80, command=self.cancel_job)
+        self.btn_cancel.pack(side="left", padx=(5,0))
+
+    def update_count_from_thread(self, value):
+        self.after(0, self.set_count, value)
+
+    def set_count(self, value):
+        self.count_var.set(value)
+        if self.current_job:
+            self.current_job["count"] = value
+
+    def increment_count(self):
+        self.set_count(self.count_var.get() + 1)
+
+    def decrement_count(self):
+        if self.count_var.get() > 0:
+            self.set_count(self.count_var.get() - 1)
+
+    def toggle_pause(self):
+        if self.pause_event.is_set():
+            self.pause_event.clear()
+            self.btn_pause.configure(text="Pause")
+        else:
+            self.pause_event.set()
+            self.btn_pause.configure(text="Resume")
+
+    def end_job(self):
+        self.stop_event.set()
+        if self.worker and self.worker.is_alive():
+            self.worker.join()
+        if self.current_job:
+            self.current_job["end"] = datetime.datetime.now().isoformat(timespec="seconds")
+            self.history.append(self.current_job)
+            self.save_history()
+            self.update_history_display()
+        self.reset_job()
+
+    def cancel_job(self):
+        if self.current_job:
+            self.current_job["canceled"] = True
+        self.end_job()
+
+    def reset_job(self):
+        self.current_job = None
+        self.job_name_var.set("")
+        self.frame_controls.pack_forget()
+
+    def load_history(self):
+        if os.path.exists(HISTORY_FILE):
+            try:
+                with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                return []
+        return []
+
+    def save_history(self):
+        try:
+            with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+                json.dump(self.history, f, indent=2)
+        except Exception as e:
+            print(f"[!] Could not save history: {e}")
+
+    def update_history_display(self):
+        self.text_history.configure(state="normal")
+        self.text_history.delete("1.0", "end")
+        for job in self.history:
+            line = f"{job['start']} - {job['name']} : {job['count']} labels"
+            if job.get('canceled'):
+                line += " (canceled)"
+            elif job.get('end'):
+                line += f" ended {job['end']}"
+            self.text_history.insert('end', line + '\n')
+        self.text_history.configure(state='disabled')
+
+
+if __name__ == "__main__":
+    app = LabelCounterApp()
+    app.mainloop()
