@@ -67,10 +67,12 @@ class LabelCounterThread(threading.Thread):
                         continue
                     if is_media_out():
                         print("[!] Alle Etiketten gezählt")
+                        s.send(ZPL_CANCEL_ALL.encode("utf-8"))
                         self.status_callback("Alle Etiketten gezählt")
                         break
                     if not is_head_closed():
                         self.status_callback("Druckkopf offen - bitte schlie\u00dfen")
+                        s.send(ZPL_CANCEL_ALL.encode("utf-8"))
                         time.sleep(0.5)
                         continue
                     else:
