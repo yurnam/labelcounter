@@ -41,9 +41,10 @@ def is_media_out():
 
 
 class LabelCounterThread(threading.Thread):
-    def __init__(self, update_callback, stop_event, pause_event):
+    def __init__(self, update_callback, status_callback, stop_event, pause_event):
         super().__init__(daemon=True)
         self.update_callback = update_callback
+        self.status_callback = status_callback
         self.stop_event = stop_event
         self.pause_event = pause_event
         self.count = 0
@@ -58,8 +59,15 @@ class LabelCounterThread(threading.Thread):
                     if self.pause_event.is_set():
                         time.sleep(0.1)
                         continue
+                    if not is_head_closed():
+                        self.status_callback("Druckkopf offen - bitte schlie\u00dfen")
+                        time.sleep(0.5)
+                        continue
+                    else:
+                        self.status_callback("")
                     if is_media_out():
                         print("[!] Alle Etiketten gezählt")
+                        self.status_callback("Alle Etiketten gezählt")
                         break
                     s.send(ZPL_FEED.encode("utf-8"))
                     self.count += 1
@@ -67,6 +75,7 @@ class LabelCounterThread(threading.Thread):
                     time.sleep(0.5)
         except Exception as e:
             print(f"[!] Connection error: {e}")
+            self.status_callback("Verbindungsfehler zum Drucker")
 
 
 class LabelCounterApp(ctk.CTk):
@@ -80,6 +89,7 @@ class LabelCounterApp(ctk.CTk):
 
         self.job_name_var = ctk.StringVar()
         self.count_var = ctk.IntVar(value=0)
+        self.status_var = ctk.StringVar(value="")
         self.history = self.load_history()
         self.current_job = None
         self.worker = None
@@ -97,6 +107,9 @@ class LabelCounterApp(ctk.CTk):
         self.entry_job.pack(side="left", expand=True, fill="x", padx=(0, 10))
         self.btn_start = ctk.CTkButton(self.frame_current, text="Start", command=self.start_job)
         self.btn_start.pack(side="left")
+
+        self.label_status = ctk.CTkLabel(self, textvariable=self.status_var, text_color="red")
+        self.label_status.pack(padx=10, pady=(0, 10), fill="x")
 
         self.frame_controls = ctk.CTkFrame(self)
 
@@ -118,7 +131,12 @@ class LabelCounterApp(ctk.CTk):
         self.count_var.set(0)
         self.stop_event.clear()
         self.pause_event.clear()
-        self.worker = LabelCounterThread(self.update_count_from_thread, self.stop_event, self.pause_event)
+        if not is_head_closed():
+            self.set_status("Druckkopf offen - bitte schlie\u00dfen")
+            return
+        self.btn_start.configure(state="disabled")
+        self.set_status("")
+        self.worker = LabelCounterThread(self.update_count_from_thread, self.update_status_from_thread, self.stop_event, self.pause_event)
         self.worker.start()
         self.show_controls()
 
@@ -138,10 +156,16 @@ class LabelCounterApp(ctk.CTk):
     def update_count_from_thread(self, value):
         self.after(0, self.set_count, value)
 
+    def update_status_from_thread(self, text):
+        self.after(0, self.set_status, text)
+
     def set_count(self, value):
         self.count_var.set(value)
         if self.current_job:
             self.current_job["count"] = value
+
+    def set_status(self, text):
+        self.status_var.set(text)
 
     def increment_count(self):
         self.set_count(self.count_var.get() + 1)
@@ -178,6 +202,8 @@ class LabelCounterApp(ctk.CTk):
         self.current_job = None
         self.job_name_var.set("")
         self.frame_controls.pack_forget()
+        self.btn_start.configure(state="normal")
+        self.set_status("")
 
     def load_history(self):
         if os.path.exists(HISTORY_FILE):
