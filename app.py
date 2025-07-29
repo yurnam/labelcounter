@@ -11,6 +11,7 @@ import customtkinter as ctk
 PRINTER_IP = "10.10.10.221"
 PRINTER_PORT = 9100
 ZPL_FEED = "^XA^FO0,0^GB1,1,1^FS^XZ\n"
+ZPL_CANCEL_ALL = "~JA\n"
 STATUS_URL = f"http://{PRINTER_IP}/index.html"
 MEDIA_OUT_TEXT = "Fehler: KEIN PAPIER"
 HISTORY_FILE = "history.json"
@@ -54,21 +55,26 @@ class LabelCounterThread(threading.Thread):
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(5)
                 s.connect((PRINTER_IP, PRINTER_PORT))
+                try:
+                    s.send(ZPL_CANCEL_ALL.encode("utf-8"))
+                    print("[\u2713] Sent cancel all jobs command.")
+                except Exception as e:
+                    print(f"[!] Failed to cancel jobs: {e}")
                 print("[\u2713] Connected to printer.")
                 while not self.stop_event.is_set():
                     if self.pause_event.is_set():
                         time.sleep(0.1)
                         continue
+                    if is_media_out():
+                        print("[!] Alle Etiketten gezählt")
+                        self.status_callback("Alle Etiketten gezählt")
+                        break
                     if not is_head_closed():
                         self.status_callback("Druckkopf offen - bitte schlie\u00dfen")
                         time.sleep(0.5)
                         continue
                     else:
                         self.status_callback("")
-                    if is_media_out():
-                        print("[!] Alle Etiketten gezählt")
-                        self.status_callback("Alle Etiketten gezählt")
-                        break
                     s.send(ZPL_FEED.encode("utf-8"))
                     self.count += 1
                     self.update_callback(self.count)
