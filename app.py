@@ -14,6 +14,18 @@ ZPL_FEED = "^XA^FO0,0^GB1,1,1^FS^XZ\n"
 STATUS_URL = f"http://{PRINTER_IP}/index.html"
 MEDIA_OUT_TEXT = "Fehler: KEIN PAPIER"
 HISTORY_FILE = "history.json"
+HEAD_OPEN_TEXT = "Fehler: DRUCKKOPF OFFEN"
+
+def is_head_closed():
+    try:
+        response = requests.get(STATUS_URL, timeout=5)
+        if HEAD_OPEN_TEXT in response.text:
+            return False
+        else:
+            return True
+    except:
+        raise
+
 
 
 def is_media_out():
@@ -47,7 +59,7 @@ class LabelCounterThread(threading.Thread):
                         time.sleep(0.1)
                         continue
                     if is_media_out():
-                        print("[!] Stopping: Media is already out.")
+                        print("[!] Alle Etiketten gezählt")
                         break
                     s.send(ZPL_FEED.encode("utf-8"))
                     self.count += 1
@@ -60,7 +72,7 @@ class LabelCounterThread(threading.Thread):
 class LabelCounterApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("Label Counter")
+        self.title("Etikettenzähler")
         self.geometry("500x600")
 
         ctk.set_appearance_mode("System")
@@ -83,7 +95,7 @@ class LabelCounterApp(ctk.CTk):
 
         self.entry_job = ctk.CTkEntry(self.frame_current, textvariable=self.job_name_var, placeholder_text="Job Name")
         self.entry_job.pack(side="left", expand=True, fill="x", padx=(0, 10))
-        self.btn_start = ctk.CTkButton(self.frame_current, text="Start Job", command=self.start_job)
+        self.btn_start = ctk.CTkButton(self.frame_current, text="Start", command=self.start_job)
         self.btn_start.pack(side="left")
 
         self.frame_controls = ctk.CTkFrame(self)
@@ -116,15 +128,11 @@ class LabelCounterApp(ctk.CTk):
         self.frame_controls.pack(padx=10, pady=10, fill="x")
 
         ctk.CTkLabel(self.frame_controls, textvariable=self.count_var, width=80).pack(side="left", padx=5)
-        self.btn_plus = ctk.CTkButton(self.frame_controls, text="+1", width=50, command=self.increment_count)
-        self.btn_plus.pack(side="left")
-        self.btn_minus = ctk.CTkButton(self.frame_controls, text="-1", width=50, command=self.decrement_count)
-        self.btn_minus.pack(side="left")
         self.btn_pause = ctk.CTkButton(self.frame_controls, text="Pause", width=80, command=self.toggle_pause)
         self.btn_pause.pack(side="left", padx=5)
-        self.btn_end = ctk.CTkButton(self.frame_controls, text="End", width=80, command=self.end_job)
+        self.btn_end = ctk.CTkButton(self.frame_controls, text="Fertig", width=80, command=self.end_job)
         self.btn_end.pack(side="left")
-        self.btn_cancel = ctk.CTkButton(self.frame_controls, text="Cancel", width=80, command=self.cancel_job)
+        self.btn_cancel = ctk.CTkButton(self.frame_controls, text="Abbrechen", width=80, command=self.cancel_job)
         self.btn_cancel.pack(side="left", padx=(5,0))
 
     def update_count_from_thread(self, value):
