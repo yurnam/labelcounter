@@ -7,6 +7,7 @@ PRINTER_PORT = 9100
 ZPL_FEED = "^XA^FO0,0^GB1,1,1^FS^XZ\n"
 STATUS_URL = f"http://{PRINTER_IP}/index.html"
 MEDIA_OUT_TEXT = "Fehler: KEIN PAPIER"
+CANCEL_ALL_CMD = "~JA\n"  # Cancel all print jobs on the printer
 
 def is_media_out():
     try:
@@ -26,6 +27,10 @@ def feed_labels_until_web_detects_media_out():
             s.settimeout(5)
             s.connect((PRINTER_IP, PRINTER_PORT))
             print("[✓] Connected to printer.")
+            # Cancel any queued jobs before starting
+            s.send(CANCEL_ALL_CMD.encode("utf-8"))
+            print("[✓] Sent cancel all jobs command.")
+            time.sleep(0.5)
 
             while True:
                 # 1. Check web status before printing
@@ -33,11 +38,16 @@ def feed_labels_until_web_detects_media_out():
                     print("[!] Stopping: Media is already out.")
                     break
 
-                # 2. Feed label
+                # 2. Feed one label
                 s.send(ZPL_FEED.encode("utf-8"))
                 label_count += 1
                 print(f"[✓] Fed label {label_count}")
                 time.sleep(0.5)  # Let printer process before next check
+
+                # 3. Stop when media runs out after printing
+                if is_media_out():
+                    print("[!] Media ran out while printing.")
+                    break
 
     except Exception as e:
         print(f"[!] Connection error: {e}")
