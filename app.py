@@ -48,7 +48,7 @@ class LabelCounterThread(threading.Thread):
         self.status_callback = status_callback
         self.stop_event = stop_event
         self.pause_event = pause_event
-        self.count = 0
+        self.count = 4
 
     def run(self):
         try:
@@ -77,6 +77,8 @@ class LabelCounterThread(threading.Thread):
                         continue
                     else:
                         self.status_callback("")
+
+                    time.sleep(0.2)
                     s.send(ZPL_FEED.encode("utf-8"))
                     self.count += 1
                     self.update_callback(self.count)
